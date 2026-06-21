@@ -13,18 +13,16 @@ export const package = {
     }
   }
 
-  # crypto from the managed openssl (libcrypto linked shared, baked store path) -> build AND
-  # runtime dep. compression from the managed static zlib (libz.a) -> build dep only. Only
-  # libc/the SDK is an assumable host floor, so every optional library openssh would
-  # autodetect (PAM, libedit, Kerberos/GSSAPI, FIDO/libfido2) is kept off in the build.
+  # crypto from managed openssl (libcrypto shared) -> build + runtime; compression from
+  # managed static zlib (libz.a) -> build only. Every optional library openssh would
+  # autodetect (PAM, libedit, Kerberos/GSSAPI, FIDO/libfido2) is kept off — host floor is libc/SDK only.
   deps: {
     build: { default: ["gmake" "openssl" "zlib"] }
     runtime: ["openssl"]
   }
 
-  # `ssh` is a capability (the command differs from the package name); git's ssh transport
-  # execs whatever `ssh` is on PATH, so installing openssh alongside git is enough. The other
-  # client/key tools (scp, sftp, ssh-keygen, ssh-agent, ssh-add, ssh-keyscan) are discovered.
+  # `ssh` is a capability (command name differs from package); git's ssh transport execs
+  # whatever `ssh` is on PATH. Other client/key tools (scp, sftp, ssh-keygen, …) are discovered.
   bins: {
     default: { ssh: "bin/ssh" }
   }
@@ -33,16 +31,14 @@ export const package = {
 export def build [ctx] {
   let source_dir = ($ctx.sources.main.dir | path join "openssh-10.3p1")
   cd $source_dir
-  # autoconf defaults CFLAGS to `-g -O2`; -g records the temp build dir in the binaries'
-  # debug map (the purity lint), so build optimized without it (openssh appends its own
-  # hardening flags to this base) — the gettext.rn pattern.
+  # drop autoconf's default -g so the temp build dir isn't baked into the debug map (purity
+  # lint); openssh appends its own hardening flags. The gettext.rn pattern.
   $env.CFLAGS = "-O2"
-  # PAM, libedit, and Kerberos are opt-in (--with-*) and left unset; --disable-security-key
-  # turns off the libfido2 probe explicitly so no host FIDO library is picked up.
+  # PAM/libedit/Kerberos are opt-in (--with-*) and left unset; --disable-security-key turns
+  # off the libfido2 probe explicitly.
   ./configure --prefix=($ctx.prefix) --with-ssl-dir=($env.OPENSSL_PREFIX) --with-zlib=($env.ZLIB_PREFIX) --disable-security-key
   make -j ($ctx.nproc)
-  # install-nokeys installs the binaries, config, and (pre-formatted) man pages but skips
-  # host-key generation — random keys would make the package's content address
-  # non-reproducible, and sshd is not run from a user-local package anyway.
+  # install-nokeys skips host-key generation — random keys would break the package's
+  # content address, and sshd isn't run from a user-local package anyway.
   make install-nokeys DESTDIR=($ctx.package_dir)
 }

@@ -12,25 +12,16 @@ export const package = {
     }
   }
 
-  # No external C library survives into the output, so runtime is empty:
-  #   * oniguruma (the syntax-highlight regex engine) is the default regex-onig path;
-  #     onig_sys's build.rs cc-compiles its vendored oniguruma/src unless
-  #     RUSTONIG_SYSTEM_LIBONIG is set (we never set it). Bundled, no system dep, no
-  #     pkg-config probe. `cc` rides in via rust's toolchain-wrappers.
-  #   * the syntax/theme cache (assets/*.bin) is committed upstream and include_bytes!'d
-  #     into the binary at compile time — nothing to build or install separately.
+  # No external C library survives into the output, so runtime is empty: oniguruma (the
+  # regex engine) is vendored and cc-compiled by onig_sys's build.rs, and the syntax/theme
+  # cache is committed upstream and include_bytes!'d at compile time.
   #
-  # Built WITHOUT the default `git` feature (see the build fn). That drops
-  # git2 -> libgit2-sys -> libz-sys from the tree. Both libgit2-sys and libz-sys are
-  # SYSTEM-FIRST (they pkg-config-probe and link host libgit2/zlib when a dev package is
-  # present), which would violate the host-floor rule — only libc and the macOS SDK are an
-  # assumable floor. The rune command subset cannot set the forcing env vars
-  # (LIBGIT2_NO_VENDOR / LIBZ_SYS_STATIC), so dropping the feature is the only fully
-  # in-subset, provably clean option. (bat's git2 is already default-features=false, so
-  # there is no openssl/libssh2 either way; the only risk was host libgit2/zlib.) Keeping
-  # the git gutter marks would mean bat's `vendored-libgit2` feature plus a store `zlib`
-  # build dep — viable, but only after verifying on a Linux host that libz-sys links the
-  # store libz.a and not host zlib.
+  # Built WITHOUT the default `git` feature (see the build fn), which drops
+  # git2 -> libgit2-sys -> libz-sys. Both -sys crates are SYSTEM-FIRST (pkg-config-probe and
+  # link host libgit2/zlib), violating the host-floor rule, and the rune command subset
+  # can't set the forcing env vars (LIBGIT2_NO_VENDOR / LIBZ_SYS_STATIC) — dropping the
+  # feature is the only fully in-subset clean option. Restoring gutter marks would need the
+  # `vendored-libgit2` feature plus a store `zlib` build dep (verify on Linux first).
   deps: {
     build: { default: ["rust"] }
     runtime: []
@@ -46,18 +37,16 @@ export def build [ctx] {
   let source_dir = ($ctx.sources.main.dir | path join "bat-0.26.1")
   cd $source_dir
 
-  # `application` is bat's full app feature set MINUS git (default = application + git).
-  # It keeps clap, paging (the pure-Rust `minus` crate), build-assets, bugreport, and
-  # regex-onig/oniguruma — a complete bat without the git2/libgit2-sys/libz-sys graph.
+  # `application` is bat's full feature set MINUS git (default = application + git) — a
+  # complete bat without the git2/libgit2-sys/libz-sys graph.
   ^cargo build --release --locked --jobs ($ctx.nproc) --no-default-features --features application
 
   mkdir ($ctx.package_dir | path join "bin")
   ^cp target/release/bat ($ctx.package_dir | path join "bin" "bat")
 
-  # bat ships no pre-rendered man/completions and does not use clap_mangen — build.rs
-  # renders them into the build-script OUT_DIR at a non-deterministic
-  # target/release/build/bat-<HASH>/out/assets/... path. Only one bat-* dir carries
-  # out/assets/, so the external `^cp` glob resolves each pattern to exactly one file.
+  # build.rs renders man/completions into the non-deterministic OUT_DIR
+  # target/release/build/bat-<HASH>/out/assets/...; only one bat-* dir carries out/assets/,
+  # so each `^cp` glob resolves to exactly one file.
   mkdir ($ctx.package_dir | path join "share" "man" "man1")
   ^cp target/release/build/bat-*/out/assets/manual/bat.1 ($ctx.package_dir | path join "share" "man" "man1" "bat.1")
 

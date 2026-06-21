@@ -12,15 +12,11 @@ export const package = {
     }
   }
 
-  # The 3.x line is a full Rust rewrite (the historical Python 2.x is superseded); builds
-  # with cargo, not pip. No external C library survives into the output: HTTP/WebSocket
-  # upload uses reqwest/tokio-tungstenite over rustls + ring (ring's asm/C is compiled by
-  # `cc` from rust's toolchain-wrappers at build time, no runtime lib) — there is NO
-  # openssl-sys and NO native-tls. The rustls "-native-roots" cert path is
-  # rustls-native-certs reading the OS trust store at runtime, not an openssl link. PTY and
-  # termios go through the `nix`/`libc` FFI to the platform libc, present everywhere. The
-  # macos-tty feature (a macOS PTY refinement) is left off: it is not required to compile
-  # and no other rune branches on OS; revisit with an OS-gated --features if needed.
+  # The 3.x line is a full Rust rewrite (builds with cargo, not pip). No external C library
+  # survives into the output: TLS is rustls + ring (no openssl-sys, no native-tls; ring's
+  # asm/C is cc-compiled at build time), native roots are read from the OS store at runtime,
+  # and PTY/termios go through nix/libc to the platform libc. The macos-tty feature is left
+  # off — not required to compile and no rune branches on OS; revisit with OS-gated --features.
   deps: {
     build: { default: ["rust"] }
     runtime: []
@@ -31,11 +27,9 @@ export def build [ctx] {
   let source_dir = ($ctx.sources.main.dir | path join "asciinema-3.2.0")
   cd $source_dir
 
-  # build.rs generates man pages and completions into $ASCIINEMA_GEN_DIR (falling back to
-  # the opaque build-script OUT_DIR if unset). Point it at a known dir so the artifacts
-  # land at deterministic paths — no target/.../build/<HASH>/out glob needed. Env mutation
-  # via `$env.X =` propagates to the cargo subprocess and its build script (the same way
-  # the C-library runes set CFLAGS/CPPFLAGS).
+  # Point build.rs's man/completion output at a known dir via $ASCIINEMA_GEN_DIR (else it
+  # falls back to the opaque OUT_DIR) so artifacts land at deterministic paths. `$env.X =`
+  # propagates to the cargo subprocess and its build script.
   let gen_dir = ($source_dir | path join "gen")
   $env.ASCIINEMA_GEN_DIR = $gen_dir
   ^cargo build --release --locked --jobs ($ctx.nproc)
@@ -44,14 +38,13 @@ export def build [ctx] {
   # No [[bin]] section: cargo names the binary after the package (src/main.rs).
   ^cp target/release/asciinema ($ctx.package_dir | path join "bin" "asciinema")
 
-  # clap_mangen writes asciinema.1 plus one page per subcommand into gen/man/. Copy the
+  # clap_mangen writes asciinema.1 plus one page per subcommand into gen/man/; copy the
   # directory contents (the `/.` suffix) into share/man/man1.
   mkdir ($ctx.package_dir | path join "share" "man" "man1")
   ^cp -R $"($gen_dir)/man/." ($ctx.package_dir | path join "share" "man" "man1")
 
-  # clap_complete writes one file per shell into gen/completion/ with bin name "asciinema"
-  # (bash -> asciinema.bash, zsh -> _asciinema, fish -> asciinema.fish; the elvish/
-  # powershell variants are also emitted but have no linker slot here).
+  # clap_complete writes one file per shell into gen/completion/ (bash -> asciinema.bash,
+  # zsh -> _asciinema, fish -> asciinema.fish); only these three are installed.
   mkdir ($ctx.package_dir | path join "share" "bash-completion" "completions")
   ^cp ($gen_dir | path join "completion" "asciinema.bash") ($ctx.package_dir | path join "share" "bash-completion" "completions" "asciinema")
   mkdir ($ctx.package_dir | path join "share" "zsh" "site-functions")
